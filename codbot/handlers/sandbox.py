@@ -14,11 +14,6 @@ class Temp(commands.Cog):
     async def on_ready(self):
         print('Temp cog loaded')
 
-    # @commands.command(name = "sync", description = 'sync')
-    # async def sync(self, ctx) -> None:
-    #     fmt = await ctx.bot.tree.sync(guild=ctx.guild)
-    #     await ctx.send(f'Synced {len(fmt)} commands')
-
     @commands.command(name = "change_string",aliases=['cs'], description= 'test change string')
     async def change_string(self, ctx, buf:str):
         self.str = buf
@@ -28,6 +23,16 @@ class Temp(commands.Cog):
     async def print_string(self, ctx):
         await ctx.send(self.str)
 
-    @app_commands.command()
+    @app_commands.command(name = 'hello',)
     async def hello(self,interaction: discord.Interaction):
-        await interaction.response.send_message(f'Hey {interaction.user.name}!',ephemeral=True)
+        await interaction.response.send_message(f'Hey {interaction.user.name}!')
+
+    @commands.command(name = "mixme",aliases=['mm'], description= 'test mixme')
+    async def mixme(self, ctx):
+        embed = discord.Embed(
+            title = 'Mixme',
+            description = 'Mixme',
+            colour = discord.Colour.from_rgb(79,121,66)
+        )
+        embed.set_footer(text='Made by zAsdf')
+        await ctx.send(embed = embed)

@@ -16,9 +16,10 @@ class Config:
         self.create_config()
 
     def create_config(self):
+        self.config.add_section('DISCORD')
         self.config.set('DISCORD', 'token', '')
 
-        with open(default_config, 'w') as f:
+        with open(default_config, 'w+') as f:
             self.config.write(f)
 
     @property
