@@ -1,7 +1,7 @@
 import configparser
 import os
 
-default_config = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
+DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
 
 class Config:
     def __init__(self):
@@ -9,8 +9,8 @@ class Config:
         self.read_config()
 
     def read_config(self):
-        if os.path.isfile(default_config):
-            self.config.read(default_config)
+        if os.path.isfile(DEFAULT_CONFIG):
+            self.config.read(DEFAULT_CONFIG)
             return
 
         self.create_config()
@@ -19,7 +19,7 @@ class Config:
         self.config.add_section('DISCORD')
         self.config.set('DISCORD', 'token', '')
 
-        with open(default_config, 'w+') as f:
+        with open(DEFAULT_CONFIG, 'w+') as f:
             self.config.write(f)
 
     @property
