@@ -3,11 +3,7 @@
 # referred to as the 'host' and 'cog' respectively.
 
 # The host will serve as the interaction from cod4 dedicated server
-# to the cog. The cog is used by the discord userst to interact with the server
-# In conjunction, RCON must also be setup appropriately.
-
-# This comment is a reminder on a tutorial how to install the dedicated server
-# for anyone using CodBot.
+# to the cog. The cog is used by the discord users to interact with the server
 
 # Github copilot autocompleted this link: https://www.youtube.com/watch?v=8Q0zNpZlXj8
 # It does nothing and I found that hilarious. Who reads comments anyway?
@@ -19,6 +15,8 @@ import asyncio
 
 # TODO:
 # - Figure out how to handle multiple servers (async start,stop,IO)
+# - RCON must also be setup appropriately.
+# - tutorial on how to install the dedicated server for anyone using CodBot
 
 #### Host ####
 EXECUTABLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server/cod4x18_dedrun")
