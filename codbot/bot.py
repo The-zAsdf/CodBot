@@ -5,6 +5,9 @@ import traceback
 from config.config import Config
 from discord.ext import commands
 import discord
+import os
+
+RESOURCE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources/")
 
 description = 'test123'
 
@@ -16,17 +19,36 @@ logger = logging.getLogger("discord")
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
 
-extensions = ['handlers.sandbox', 'handlers.lobby']
+extensions = ['handlers.lobby']
 
 
 class Bot(commands.Bot):
+    image_dict = {}
+
     def __init__(self, *args, **kwargs):
         super(Bot, self).__init__(*args, **kwargs)
         self.synced = False
 
+    # Maybe do this over. Used for loading images.
+    def get_resources(self):
+        if not os.path.exists(RESOURCE_PATH):
+            os.makedirs(RESOURCE_PATH)
+        for fname in os.listdir(RESOURCE_PATH):
+            if fname.endswith((".webp", ".png", ".jpg", ".jpeg")):
+                key = fname.split(".")[0]
+                f = discord.File(os.path.join(RESOURCE_PATH, fname), filename=fname)
+                self.image_dict[key] = {"file": f, "name": fname}
+
+    def get_image(self, name):
+        if name not in self.image_dict:
+            return self.image_dict["Default"]
+        return self.image_dict[name]
+
+            
     async def on_ready(self):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         print('------')
+        self.get_resources()
         await self.load_extensions()
 
         if not self.synced:
