@@ -2,7 +2,7 @@
 import logging
 import sys
 import traceback
-from config.config import Config
+from handlers.config import Config
 from discord.ext import commands
 import discord
 import os
@@ -80,8 +80,8 @@ class Bot(commands.Bot):
 
 def start():
     config = Config()
-    if not config.discord_token:
-        logger.error("Please enter your Discord bot account token in config.ini")
+    if not config.discord_token or not config.cod_token:
+        logger.error("Please configure config.ini")
         sys.exit()
 
     bot = Bot(command_prefix = '!', description=description, intents = intents)
