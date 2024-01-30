@@ -18,6 +18,9 @@ class Config:
     def create_config(self):
         self.config.add_section('DISCORD')
         self.config.set('DISCORD', 'token', '')
+        self.config.set('COD', 'token', '')
+        self.config.set('RCON', 'token', '')
+        self.config.set('GOOGL', 'token', '')
 
         with open(DEFAULT_CONFIG, 'w+') as f:
             self.config.write(f)
@@ -29,3 +32,11 @@ class Config:
     @property
     def cod_token(self):
         return self.config.get('COD', 'token')
+    
+    @property
+    def rcon_token(self):
+        return self.config.get('RCON', 'token')
+    
+    @property
+    def googl_token(self):
+        return self.config.get('GOOGL', 'token')

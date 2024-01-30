@@ -1,6 +1,6 @@
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import collections
 import logging
 import asyncio
@@ -9,6 +9,9 @@ import asyncio
 import os
 from .server import Host
 from .game import Game, MAPS, GAMEMODES
+import time
+from datetime import datetime
+from .magnet import shorten
 
 # TODO:
 # - Set capacity
@@ -21,29 +24,72 @@ logger.addHandler(logging.StreamHandler())
 
 
 DEFAULT_COLOR = discord.Colour.from_rgb(79,121,66)
+MIN_PORT = 28961
+MAX_PORT = 28967
 
 async def setup(bot):
-    await bot.add_cog(Lobby(bot))
+    await bot.add_cog(Master(bot))
 
-class Lobby(commands.Cog):
+class LobbyManager():
+    def __init__(self):
+        self.instances = set()
+    
+    def add_instance(self, game):
+        self.instances.add(game)
+
+    def remove_instance(self, game):
+        self.instances.remove(game)
+
+    def is_player_in_instance(self, player):
+        return any(player in game for game in self.instances)
+    
+    def get_game_from_author(self, user):
+        return any(user == game.author for game in self.instances)
+    
+    def ports_in_use(self):
+        return [game.port for game in self.instances]
+
+class Master(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.instances = collections.defaultdict(Game)
-        self.instances.default_factory = lambda: None
+        self.lobbies = LobbyManager()
+        self.channel = self.set_channel()
+        print('starting public servers')
+        self.start_public_servers()
 
-    def add_instance(self, player, game):
-        self.instances[player] = game
-
-    def remove_instance(self, player):
-        self.instances.pop(player)
-
-    # Before creating a new instance, check if player is already in one.
-    def is_player_in_instance(self, player):
-        return any(player in game for game in self.instances.values())
     
-    def __getitem__(self, player):
-        return self.instances[player]
+
+
+    def get_next_open_port(self):
+        for port in range(MIN_PORT, MAX_PORT):
+            if not self.is_port_in_use(port):
+                return port
+        return None
+
+    def is_port_in_use(self, port):
+        return port in self.lobbies.ports_in_use()
+    
+    def set_channel(self, id = 1201125288600412181):
+        try:
+            return self.bot.get_channel(id)
+        except Exception as e:
+            logger.error(f'Could not set channel: {e}')
+            return None
         
+    def start_public_servers(self):
+        # 1. Find the channel and clear the messages.
+        # 2. Create the public servers.
+        # 3. If the channel is found, loop the parse_status from public server & send to channel.
+        # 4. Loop the output_queue from public server & update message
+
+        pub = Game(None, port = self.get_next_open_port(), gamemode='TDM', capacity=16)
+        self.lobbies.add_instance(pub)
+        host = Host(pub, print_output= False, status= True, ROQ = False)
+        view = PublicView(pub, host, self.lobbies, self.channel, timeout = None)
+        asyncio.create_task(view.start())
+
+        
+    
 
     # How about creating a default embedded message template?
 
@@ -51,20 +97,25 @@ class Lobby(commands.Cog):
     @commands.command(name = 'mixme', aliases = ['mm'], description = 'test mixme')
     async def mixme(self, ctx):
         player = ctx.author
-        if self.is_player_in_instance(player):
+        if self.lobbies.is_player_in_instance(player):
             await ctx.send(f'{player} is already in a queue!')
             return
-        self.add_instance(player, Game(player))
-        view = CustomView(self.instances[player], timeout = None)
+        port = self.get_next_open_port()
+        if port == None:
+            await ctx.send(f'No available servers. Try again later.')
+            return
+        newgame = Game(player,port)
+        self.lobbies.add_instance(newgame)
+        view = CustomView(newgame, self.lobbies, timeout = None)
         embed = discord.Embed(
-            title = f'{self.instances[player].gamemode} on {self.instances[player].loc}',
-            description = f'{len(self.instances[player]):d}/{self.instances[player].capacity:d}',
+            title = f'{newgame.gamemode} on {newgame.loc}',
+            description = f'{len(newgame):d}/{newgame.capacity:d}',
             colour = DEFAULT_COLOR,
         )
-        # image, name = self.bot.get_image(self.instances[player].loc).values()
+        # image, name = self.bot.get_image(newgame.loc).values()
         # embed.set_thumbnail(url = f'attachment://{name}')
         # embed.set_footer(text='Made by zAsdf')
-        players = self.instances[player].get_players() # This feels pointless. Currently a safety net.
+        players = newgame.get_players() # This feels pointless. Currently a safety net.
         midpoint = len(players) // 2 + len(players) % 2
         embed.clear_fields()
         embed.add_field(name = 'Players', value = '\n'.join(player.display_name for player in players[:midpoint]), inline = True)
@@ -79,13 +130,84 @@ class Lobby(commands.Cog):
     async def on_ready(self):
         print('Lobby cog loaded')
     
-class CustomView(discord.ui.View):
+
+class PublicView(discord.ui.View):
     message = None
 
-    def __init__(self, game, timeout:float=None):
+    def __init__(self, game, host, lobbymanager, channel, timeout:float=None):
+        super().__init__(timeout = timeout)
+        self.game = game
+        self.lobbymanager = lobbymanager
+        self.host = host
+        self.channel = channel
+        if self.channel != None:
+            asyncio.create_task(self.channel.purge())
+
+    async def start(self):
+        if self.channel != None:
+            await asyncio.gather(
+                self.send_first_message(),
+                self.host.start(),
+                self.update_from_status()
+            )
+        else:
+            await self.host.start()
+
+    async def clear_channel(self):
+        await self.channel.purge()
+
+    # redo this. Put it in update_from_status. Only send first message if self.message doesn't exist.
+    # Custom URI protocls are not supported by discord. Need to find a workaround. Host a website & redirect?
+    async def send_first_message(self):
+        embed = discord.Embed(
+            title = f'{self.game.gamemode} on {self.game.loc}',
+            description = time.strftime('%b %d, %Y - %H:%M:%S'),
+            colour = DEFAULT_COLOR,
+        )
+        players = []
+        midpoint = len(players) // 2 + len(players) % 2
+        embed.clear_fields()
+        embed.add_field(name = f'Players: {len(self.game):d}/{self.game.capacity:d}', value = '\n'.join(player.display_name for player in players[:midpoint]), inline = True)
+        embed.add_field(name = '\u200b', value = '\n'.join(player.display_name for player in players[midpoint:]), inline = True)
+        embed.add_field(name = 'Join the game', value = f'/connect {self.host.ip}:{self.game.port}', inline = False)
+        self.message = await self.channel.send(embed = embed, view = self)
+
+    @tasks.loop(seconds = 5)
+    async def update_from_status(self):
+        try:
+            print('here')
+            serverinfo, playerinfo = await self.host.output_queue.get()
+            map_name = serverinfo['map'][0]
+            # gamemode does not exist in serverinfo (problem? Eh whatever)
+            embed = discord.Embed(
+                title = f'{self.game.gamemode} on {map_name}',
+                description = time.strftime('%b %d, %Y - %H:%M:%S'),
+                colour = DEFAULT_COLOR,
+            )
+            players = playerinfo['name']
+            midpoint = len(players) // 2 + len(players) % 2
+            embed.clear_fields()
+            embed.add_field(name = f'Players: {len(self.game):d}/{self.game.capacity:d}', value = '\n'.join(player.display_name for player in players[:midpoint]), inline = True)
+            embed.add_field(name = '\u200b', value = '\n'.join(player.display_name for player in players[midpoint:]), inline = True)
+            embed.add_field(name = 'Join the game', value = f'/connect {self.host.ip}:{self.game.port}', inline = False)
+            self.message = await self.message.edit(embed = embed, view = self)
+        except Exception as e:
+            logger.error(f'Error in update_from_status: {e}')
+            return
+
+
+""" 
+    Below lies the custom view for user created lobbies.
+"""
+class CustomView(discord.ui.View):
+    """ The custom view for an embedded message representing a lobby in discord. """
+    message = None
+
+    def __init__(self, game, lobbymanager, timeout:float=None):
         super().__init__(timeout = timeout)
         self.game = game
         self.last_removed = None
+        self.lobbymanager = lobbymanager
         
 
     def disable_all_items(self):
@@ -109,6 +231,7 @@ class CustomView(discord.ui.View):
             colour = DEFAULT_COLOR
         )
         embed.set_footer(text='Made by zAsdf')
+        self.lobbymanager.remove_instance(self.game)
         await self.message.edit(embed = embed, view = self)
         self.stop()
 
@@ -119,6 +242,7 @@ class CustomView(discord.ui.View):
         embed = interaction.message.embeds[0]
         embed.description = 'Game cancelled: No players left in queue.'
         embed.clear_fields()
+        self.lobbymanager.remove_instance(self.game)
         await interaction.response.edit_message(embed = embed,view = self)
         self.stop()
 
@@ -141,8 +265,8 @@ class CustomView(discord.ui.View):
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button,):
         player = interaction.user
 
-        if self.game.player_in_lobby(player):
-            await interaction.response.send_message(f'{player} is already in the queue!')
+        if self.lobbymanager.is_player_in_instance(player):
+            await interaction.response.send_message(f'{player} is already in a queue!')
             return
         elif self.game.is_full():
             await interaction.response.send_message(f'{player} cannot join the queue because it is full!')
@@ -202,7 +326,7 @@ class CustomView(discord.ui.View):
             await interaction.response.send_message(f'{interaction.user} stop touching my buttons.')
             return
 
-        self.host = Host(self.game) # The view has the Host object. Might need to change this later?
+        self.host = Host(self.game, print_output= False, status= True, ROQ = False) # The view has the Host object. Might need to change this later?
         
         
         # Change buttons for server specific stuff? (map, gamemode, lobby size)
@@ -216,6 +340,9 @@ class CustomView(discord.ui.View):
         # await self.start_game(interaction)
 
 class MapDropdown(discord.ui.Select):
+    """
+    A custom dropdown menu for selecting a map.
+    """
     def __init__(self, view: CustomView):
         self.view = view
         options = [discord.SelectOption(label = map) for map in MAPS]
@@ -243,15 +370,20 @@ class MapDropdown(discord.ui.Select):
             await interaction.response.edit_message(embed = embed, view = self.view)
 
 class GamemodeDropdown(discord.ui.Select):
+    """
+    A custom dropdown menu for selecting a gamemode.
+    """
+
     def __init__(self, view: CustomView):
         self.view = view
-        options = [discord.SelectOption(label = gamemode) for gamemode in GAMEMODES]
+        options = [discord.SelectOption(label=gamemode) for gamemode in GAMEMODES]
 
-        super().__init__(placeholder = 'Select a gamemode', 
-                         min_values = 1, 
-                         max_values = 1, 
-                         options = options
-                         )
+        super().__init__(
+            placeholder='Select a gamemode',
+            min_values=1,
+            max_values=1,
+            options=options
+        )
     
     async def callback(self, interaction: discord.Interaction):
         if self.view.game.author != interaction.user:
@@ -267,6 +399,6 @@ class GamemodeDropdown(discord.ui.Select):
             # Re-enable change gamemode button
             self.view.add_item(self.view.last_removed)
             self.view.last_removed = None
-            await interaction.response.edit_message(embed = embed, view = self.view)
+            await interaction.response.edit_message(embed=embed, view=self.view)
         
         

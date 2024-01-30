@@ -1,5 +1,10 @@
 from .orderedset import OrderedSet
 import random
+import logging
+
+logger = logging.getLogger("game")
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler())
 
 
 DEFAULT_LOBBY_SIZE = 10
@@ -21,14 +26,16 @@ GAMEMODES = {
 }
 
 class Game:
-    def __init__(self, author, loc:str=None, gamemode:str=None, capacity:int=DEFAULT_LOBBY_SIZE):
+    def __init__(self, author, port:int, loc:str=None, gamemode:str=None, 
+                 capacity:int=DEFAULT_LOBBY_SIZE, is_public:bool=False):
         self.loc = self.set_loc(loc)
         self.gamemode = self.set_gamemode(gamemode)
         self.author = author
+        self.port = port
         self.capacity = capacity
         self.lobby = OrderedSet()
-        self.busy = False
-        self.add_player(author)
+        if author != None: self.add_player(author)
+        self.is_public = is_public
 
     def is_full(self):
         return len(self.lobby) >= self.capacity
@@ -66,7 +73,7 @@ class Game:
     def set_gamemode(self, gamemode:str):
         if gamemode == None:
             return 'TDM'
-        elif gamemode in MAPS:
+        elif gamemode in GAMEMODES:
             return gamemode
         else:
             logger.info(f'Invalid gamemode: {gamemode}')
