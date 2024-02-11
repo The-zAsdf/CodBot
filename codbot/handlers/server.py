@@ -18,6 +18,7 @@ import time
 import asyncio_dgram
 import re
 from pandas import DataFrame
+from .config_game_generator import generate_config
 
 # TODO:
 # - Figure out how to handle multiple servers (async start,stop,IO)
@@ -46,6 +47,10 @@ def get_ip(remote_server="google.com"):
         s.connect((remote_server, 80))
         return s.getsockname()[0]
 
+# def get_ip():
+    # return 'zoosd.asuscomm.com'
+    # return '192.168.50.130'
+
 
 class Host:
     cod_token = Config().cod_token
@@ -55,25 +60,24 @@ class Host:
     output_queue = asyncio.Queue()
     input_queue = asyncio.Queue()
 
-    def __init__(self, game:Game, print_output = False, status = False, ROQ = False):
+    def __init__(self, game:Game, print_output = False, status = False, ROQ = False, cfg = 'server_tdm.cfg'):
         self.game = game
         self.game.busy = True
         self.print_output = print_output
         self.status = status
         self.ROQ = ROQ
         self.ip = get_ip()
+        self.cfg = generate_config(game)
+        print(self.cfg)
 
     def parse_game(self):
         args = {
             '+set sv_authtoken': self.cod_token,
-            '+set sv_maxclients': self.game.capacity,
-            '+set fs_game': 'mods/pml220', # This should be in config, but it doesn't seem to work. Fix pls.
-            '+set net_ip': self.ip,
-            '+set net_port': self.game.port,
             '+set rcon_password': self.rcon_token,
-            '+exec': 'server.cfg',
-            '+set g_gametype': GAMEMODES[self.game.gamemode],
-            'map': MAPS[self.game.loc],
+            '+set sv_maxclients': self.game.capacity,
+            '+set net_port': self.game.port,
+            '+set net_ip': self.ip,
+            '+exec': self.cfg,
         }
         temp =  [f"{k} {v}" for k,v in args.items()]
         return [arg for q in temp for arg in q.split(' ')]
@@ -89,10 +93,9 @@ class Host:
             cwd = LOCAL_DIR,
         )
         
-        if self.status:
-            await asyncio.sleep(1)
+        if True:
+            await asyncio.sleep(1) # Wait for server to start
             self.stream = await asyncio_dgram.connect((self.ip, self.game.port))
-
 
 
         runs = []
@@ -100,12 +103,40 @@ class Host:
             runs.append(self.read_stdout)
         if self.status:
             runs.append(self.ping_status)
+            runs.append(self.perma_parse_status)
             if self.ROQ:
                 runs.append(self.read_output_queue)
         
 
+
         await asyncio.gather(*[f() for f in runs])
 
+
+    async def restart_server(self):
+        await asyncio.sleep(5)
+        await self.pass_command('restart')
+
+    async def sandbox(self):
+        command = 'systeminfo'
+        rcon_password = self.rcon_token.encode("utf-8")
+        packet = b'\xFF\xFF\xFF\xFFrcon ' + rcon_password + b' ' + command.encode("utf-8")
+        try:
+            await self.stream.send(packet)
+            data, _ = await self.stream.recv()
+            response = data.decode("utf-8", errors="ignore")
+            print()
+            print()
+            print(response)
+            print()
+            print()
+            return response
+        
+        except InterruptedError as e:
+            print(e)
+            print('Failed to send command.')
+            return None
+
+    # Parse the status response from server
     def parse_status(self, response):
         serverinfo = {}
         playerinfo = []
@@ -124,14 +155,24 @@ class Host:
                 playerinfo.append(line)
 
         df = DataFrame(playerinfo, columns=header)
-        return DataFrame(serverinfo, index = [0]), df
+        return DataFrame(serverinfo, index = [0]), df # serverinfo, playerinfo
     
+    # Constantly waits for response from server, parses it and puts it in output queue
+    async def perma_parse_status(self):
+        while True:
+            data, _ = await self.stream.recv()
+            response = data.decode("utf-8", errors="ignore")
+            serverinfo, playerinfo = await asyncio.to_thread(self.parse_status, response)
+            await self.output_queue.put((serverinfo, playerinfo))
+    
+    # Printing output queue
     async def read_output_queue(self):
         while True:
             line = await self.output_queue.get()
             print(line)
             print()
 
+    # Constantly pings server via UDP for status
     async def ping_status(self, interval = 5):
         rcon_password = self.rcon_token.encode("utf-8")
         rcon_command = 'status'.encode("utf-8")
@@ -140,15 +181,10 @@ class Host:
             try:
                 await asyncio.sleep(interval)
                 await self.stream.send(packet)
-                data, _ = await self.stream.recv()
-                response = data.decode("utf-8", errors="ignore")
 
-                serverinfo, playerinfo = await asyncio.to_thread(self.parse_status, response)
-                await self.output_queue.put((serverinfo, playerinfo))
             except InterruptedError as e:
                 print(e)
                 print('status fetching failed.')
-                break
         
 
 

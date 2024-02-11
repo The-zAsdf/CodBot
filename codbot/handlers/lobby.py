@@ -54,10 +54,7 @@ class Master(commands.Cog):
         self.bot = bot
         self.lobbies = LobbyManager()
         self.channel = self.set_channel()
-        print('starting public servers')
         self.start_public_servers()
-
-    
 
 
     def get_next_open_port(self):
@@ -84,7 +81,7 @@ class Master(commands.Cog):
 
         pub = Game(None, port = self.get_next_open_port(), gamemode='TDM', capacity=16)
         self.lobbies.add_instance(pub)
-        host = Host(pub, print_output= False, status= True, ROQ = False)
+        host = Host(pub, print_output= True, status= True, ROQ = False,  cfg = 'server_tdm.cfg')
         view = PublicView(pub, host, self.lobbies, self.channel, timeout = None)
         asyncio.create_task(view.start())
 
@@ -140,61 +137,63 @@ class PublicView(discord.ui.View):
         self.lobbymanager = lobbymanager
         self.host = host
         self.channel = channel
-        if self.channel != None:
-            asyncio.create_task(self.channel.purge())
+        self.message = None
 
     async def start(self):
         if self.channel != None:
             await asyncio.gather(
-                self.send_first_message(),
                 self.host.start(),
-                self.update_from_status()
+                self.update_status.start(),
             )
         else:
             await self.host.start()
-
-    async def clear_channel(self):
-        await self.channel.purge()
-
-    # redo this. Put it in update_from_status. Only send first message if self.message doesn't exist.
-    # Custom URI protocls are not supported by discord. Need to find a workaround. Host a website & redirect?
-    async def send_first_message(self):
-        embed = discord.Embed(
-            title = f'{self.game.gamemode} on {self.game.loc}',
-            description = time.strftime('%b %d, %Y - %H:%M:%S'),
-            colour = DEFAULT_COLOR,
-        )
-        players = []
-        midpoint = len(players) // 2 + len(players) % 2
-        embed.clear_fields()
-        embed.add_field(name = f'Players: {len(self.game):d}/{self.game.capacity:d}', value = '\n'.join(player.display_name for player in players[:midpoint]), inline = True)
-        embed.add_field(name = '\u200b', value = '\n'.join(player.display_name for player in players[midpoint:]), inline = True)
-        embed.add_field(name = 'Join the game', value = f'/connect {self.host.ip}:{self.game.port}', inline = False)
-        self.message = await self.channel.send(embed = embed, view = self)
-
+        
     @tasks.loop(seconds = 5)
-    async def update_from_status(self):
-        try:
-            print('here')
-            serverinfo, playerinfo = await self.host.output_queue.get()
-            map_name = serverinfo['map'][0]
-            # gamemode does not exist in serverinfo (problem? Eh whatever)
+    async def update_status(self):
+        # print('update_status: ', end = '')
+        if self.message == None:
+            # print('first message ', end = '')
+            await asyncio.wait_for(self.channel.purge(), timeout= None)
             embed = discord.Embed(
-                title = f'{self.game.gamemode} on {map_name}',
+                title = f'{self.game.gamemode} on {self.game.loc}',
                 description = time.strftime('%b %d, %Y - %H:%M:%S'),
                 colour = DEFAULT_COLOR,
             )
-            players = playerinfo['name']
+            players = []
             midpoint = len(players) // 2 + len(players) % 2
             embed.clear_fields()
             embed.add_field(name = f'Players: {len(self.game):d}/{self.game.capacity:d}', value = '\n'.join(player.display_name for player in players[:midpoint]), inline = True)
             embed.add_field(name = '\u200b', value = '\n'.join(player.display_name for player in players[midpoint:]), inline = True)
-            embed.add_field(name = 'Join the game', value = f'/connect {self.host.ip}:{self.game.port}', inline = False)
-            self.message = await self.message.edit(embed = embed, view = self)
-        except Exception as e:
-            logger.error(f'Error in update_from_status: {e}')
-            return
-
+            embed.add_field(name = 'Join the game', value = f'[Click me](https://zoosd.asuscomm.com/{self.game.port}-link/)', inline = False)
+            self.message = await self.channel.send(embed = embed, view = self)
+            # print('(done)')
+        else:
+            # print('update message ', end = '')
+            try:
+                # print('(trying... ', end = '')
+                serverinfo, playerinfo = await self.host.output_queue.get()
+                map_name = serverinfo['map'][0]
+                # gamemode does not exist in serverinfo (problem? Eh whatever)
+                embed = discord.Embed(
+                    title = f'{self.game.gamemode} on {map_name}',
+                    description = time.strftime('%b %d, %Y - %H:%M:%S'),
+                    colour = DEFAULT_COLOR,
+                )
+                players = playerinfo['name']
+                midpoint = len(players) // 2 + len(players) % 2
+                embed.clear_fields()
+                embed.add_field(name = f'Players: {len(self.game):d}/{self.game.capacity:d}', value = '\n'.join(player.display_name for player in players[:midpoint]), inline = True)
+                embed.add_field(name = '\u200b', value = '\n'.join(player.display_name for player in players[midpoint:]), inline = True)
+                embed.add_field(name = 'Join the game!', value = f'[Click me](https://zoosd.asuscomm.com/{self.game.port}-link/)', inline = False)
+                self.message = await self.message.edit(embed = embed, view = self)
+                # print('done)')
+            # except TimeoutError as e:
+                # print('error)')
+                # logger.error(f'Error in update_from_status: {e}')
+                # print('missed)')
+            except Exception as e:
+                print('error)')
+                logger.error(f'Error in update_from_status: {e}')
 
 """ 
     Below lies the custom view for user created lobbies.
