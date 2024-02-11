@@ -2,3 +2,8 @@ Face.png
 config.ini
 __pycache__/
 server/
+dummy.py
+cod_master.py
+loc_server.py
+test_master.py
+test1.py
